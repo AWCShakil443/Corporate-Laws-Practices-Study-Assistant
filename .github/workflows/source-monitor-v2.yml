@@ -1,0 +1,35 @@
+name: Source monitor v2
+on:
+  schedule:
+    - cron: '41 2 * * 1'
+  workflow_dispatch:
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: .source-cache
+          key: legal-source-fingerprint-${{ github.repository }}-${{ github.run_id }}
+          restore-keys: |
+            legal-source-fingerprint-${{ github.repository }}-
+      - name: Download official sources and compare
+        env:
+          ACT: https://bdlaws.minlaw.gov.bd/act-788.html
+          SYLLABUS: https://www.icab.org.bd/page/icab-latest-syllabus
+        run: |
+          set -e
+          mkdir -p .source-cache
+          curl -L --fail --silent --show-error "$ACT" -o /tmp/act.html
+          curl -L --fail --silent --show-error "$SYLLABUS" -o /tmp/syllabus.html
+          sha256sum /tmp/act.html /tmp/syllabus.html > /tmp/current.sha256
+          if [ -f .source-cache/previous.sha256 ] && ! cmp -s /tmp/current.sha256 .source-cache/previous.sha256; then echo SOURCE_CHANGED=true >> "$GITHUB_ENV"; fi
+          cp /tmp/current.sha256 .source-cache/previous.sha256
+      - name: Flag review
+        if: env.SOURCE_CHANGED == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({owner:context.repo.owner,repo:context.repo.repo,title:'Review required: Companies Act or ICAB syllabus changed',body:'The automated source monitor detected a change. Review the official source before updating study content. The monitor does not automatically rewrite legal material.',labels:['source-review']});
