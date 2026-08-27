@@ -7,24 +7,45 @@ jobs:
   monitor:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       issues: write
     steps:
       - uses: actions/checkout@v4
-      - name: Check official source pages
-        env:
-          COMPANIES_ACT: https://bdlaws.minlaw.gov.bd/act-788.html
-          ICAB_SYLLABUS: https://www.icab.org.bd/page/icab-latest-syllabus
+      - name: Check official sources
         run: |
           set -e
           mkdir -p .source-cache
-          curl -L --fail --silent --show-error "$COMPANIES_ACT" -o companies-act.html
-          curl -L --fail --silent --show-error "$ICAB_SYLLABUS" -o icab-syllabus.html
-          sha256sum companies-act.html icab-syllabus.html > current.sha256
+          urls=(
+            'https://www.icab.org.bd/icabadmin/uploads/ckeditor/62542.%20ICAB%20Syllabus-2023_%28PDF%20File%29.pdf'
+            'https://bdlaws.minlaw.gov.bd/act-788.html'
+            'https://sec.gov.bd/home/laws'
+            'https://bdlaws.minlaw.gov.bd/act-print-751.html'
+            'https://www.bb.org.bd/en/index.php/about/lawsnacts'
+            'https://bdlaws.minlaw.gov.bd/act-print-1037.html'
+            'https://bdlaws.minlaw.gov.bd/act-print-952.html'
+            'https://www.bb.org.bd/aboutus/regulationguideline/foreignexchange/fullguide_v1.pdf'
+            'https://www.bb.org.bd/feidportal/guidelines/gudforextransvol2.pdf'
+          )
+          : > current.sha256
+          for i in "${!urls[@]}"; do
+            url="${urls[$i]}"
+            curl -L --fail --silent --show-error --max-time 60 "$url" -o ".source-cache/current-$i" || { echo "UNREACHABLE $url" >> current.sha256; continue; }
+            sha256sum ".source-cache/current-$i" | awk -v u="$url" '{print $1" "u}' >> current.sha256
+          done
           if [ -f .source-cache/previous.sha256 ] && ! cmp -s current.sha256 .source-cache/previous.sha256; then echo "SOURCE_CHANGED=true" >> "$GITHUB_ENV"; fi
+      - name: Save current fingerprints
+        run: cp current.sha256 .source-cache/previous.sha256
+      - name: Commit updated source fingerprints
+        if: env.SOURCE_CHANGED == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .source-cache/previous.sha256
+          git commit -m 'chore: update official source fingerprints' || true
+          git push || true
       - name: Open review issue when sources change
         if: env.SOURCE_CHANGED == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.issues.create({owner:context.repo.owner,repo:context.repo.repo,title:'Legal or syllabus source changed: review required',body:'An official source changed. Review the Companies Act and/or ICAB syllabus before changing study content. No study content is automatically overwritten.',labels:['source-review']});
+            await github.rest.issues.create({owner:context.repo.owner,repo:context.repo.repo,title:'Official legal or syllabus source changed: review required',body:'One or more monitored official sources changed. Review the relevant Act, BSEC rule, Bangladesh Bank guideline or ICAB syllabus before changing study content. The workflow intentionally does not rewrite legal content automatically.',labels:['source-review']});
